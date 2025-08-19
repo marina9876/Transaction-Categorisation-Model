@@ -1,0 +1,258 @@
+import pandas as pd
+import re
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import LinearSVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, accuracy_score
+from sentence_transformers import SentenceTransformer
+
+
+# Load dataset
+
+df1 = pd.read_csv('/kaggle/input/daily-transactions-dataset/Daily Household Transactions.csv')
+
+# new balanced dataset
+df2 = pd.read_csv('/kaggle/input/synthetic-balanced-expenses/synthetic_expenses (1).csv')
+
+df3 = pd.read_csv('/kaggle/input/selected-expense-categories-to-reduce-bias/synthetic_expenses_selected_categories.csv')
+
+# combine them into one DataFrame (if you want to train on both)
+df = pd.concat([df1, df2, df3], ignore_index=True)
+
+# Clean text column (example: 'Note')
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r'[^a-zA-Z\s]', '', text)  # remove punctuation/numbers
+    return text.strip()
+
+df['cleaned_note'] = df['Note'].apply(clean_text)
+df['Category'] = df['Category'].str.lower().str.strip()
+
+# --------------------------
+# Merge rare categories into "Rare" and very rare into "Other"
+threshold = 100  # Any category with count < 100 will be grouped as "Other"
+
+category_counts = df['Category'].value_counts()
+
+# Categories to be grouped as "Other"
+small_categories = category_counts[category_counts < threshold].index
+
+# Apply mapping
+df['Category'] = df['Category'].apply(lambda cat: "other" if cat in small_categories else cat)
+
+# Print counts to verify
+print("Final Category Counts:")
+print(df['Category'].value_counts())
+
+print("\nCategories grouped as 'Other':")
+print(list(small_categories))
+
+Final Category Counts:
+Category
+other             1525
+food              1007
+household          976
+transportation     907
+investment         903
+subscription       843
+Name: count, dtype: int64
+
+Categories grouped as 'Other':
+['health', 'family', 'recurring deposit', 'apparel', 'money transfer', 'salary', 'gift', 'public provident fund', 'equity mutual fund e', 'beauty', 'gpay reward', 'education', 'maid', 'saving bank account 1', 'festivals', 'equity mutual fund a', 'equity mutual fund f', 'interest', 'dividend earned on shares', 'culture', 'small cap fund 1', 'small cap fund 2', 'share market', 'maturity amount', 'life insurance', 'bonus', 'equity mutual fund c', 'petty cash', 'tourism', 'cook', 'rent', 'grooming', 'water (jar /tanker)', 'saving bank account 2', 'garbage disposal', 'scrap', 'fixed deposit', 'self-development', 'amazon pay cashback', 'documents', 'tax refund', 'equity mutual fund b', 'equity mutual fund d', 'social life']
+
+# Simple text cleaning function
+def clean_text(text):
+    text = str(text).lower()  # Lowercase & convert to string
+    text = ''.join(c for c in text if c.isalnum() or c.isspace())  # Remove punctuation
+    return text
+
+# Adjust column name here if your CSV shows something different
+df['cleaned_note'] = df['Note'].astype(str).apply(clean_text)
+
+# Check a sample
+df[['Note', 'cleaned_note']].head()
+
+print(df['Category'].value_counts())
+
+# Optional: If there are too few samples for some categories, you may remove them
+df = df[df['Category'].map(df['Category'].value_counts()) > 1]
+
+Category
+other             1525
+food              1007
+household          976
+transportation     907
+investment         903
+subscription       843
+Name: count, dtype: int64
+
+from sklearn.model_selection import train_test_split
+
+X = df['cleaned_note']
+y = df['Category']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+vectorizer = TfidfVectorizer()
+X_train_tfidf = vectorizer.fit_transform(X_train)
+X_test_tfidf = vectorizer.transform(X_test)
+models = {
+    "Logistic Regression": LogisticRegression(max_iter=1000),
+    "Naive Bayes": MultinomialNB(),
+    "Linear SVM": LinearSVC(),
+    "Random Forest": RandomForestClassifier(n_estimators=200, random_state=42)
+}
+
+results = {}
+
+for name, clf in models.items():
+    clf.fit(X_train_tfidf, y_train)
+    y_pred = clf.predict(X_test_tfidf)
+    report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
+    results[name] = {
+        "Accuracy": report["accuracy"],
+        "Macro F1": report["macro avg"]["f1-score"],
+        "Weighted F1": report["weighted avg"]["f1-score"]
+    }
+
+# Convert results to a nice table
+results_df = pd.DataFrame(results).T
+print(results_df)
+
+                     Accuracy  Macro F1  Weighted F1
+Logistic Regression  0.910787  0.919409     0.911705
+Naive Bayes          0.918086  0.927261     0.919149
+Linear SVM           0.915653  0.924679     0.916585
+Random Forest        0.913220  0.923573     0.914551
+
+# Encode train/test data
+model = SentenceTransformer('all-MiniLM-L6-v2')
+X_train_emb = model.encode(X_train.tolist(), show_progress_bar=True)
+X_test_emb = model.encode(X_test.tolist(), show_progress_bar=True)
+
+# Train Logistic Regression
+clf = LogisticRegression(max_iter=2000)
+clf.fit(X_train_emb, y_train)
+
+# Predictions
+y_pred = clf.predict(X_test_emb)
+
+# Print results
+acc = accuracy_score(y_test, y_pred)
+print("Embedding-based Logistic Regression")
+print("Accuracy:", acc)
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred, zero_division=0))
+
+Embedding-based Logistic Regression
+Accuracy: 0.9140308191403081
+
+Classification Report:
+                precision    recall  f1-score   support
+
+          food       0.90      0.88      0.89       209
+     household       0.94      0.86      0.90       187
+    investment       0.97      0.94      0.95       168
+         other       0.82      0.91      0.86       315
+  subscription       0.97      0.93      0.95       182
+transportation       0.99      0.98      0.98       172
+
+      accuracy                           0.91      1233
+     macro avg       0.93      0.92      0.92      1233
+  weighted avg       0.92      0.91      0.91      1233
+
+from sklearn.linear_model import LogisticRegression
+
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train_tfidf, y_train)
+
+from sklearn.metrics import classification_report
+
+y_pred = model.predict(X_test_tfidf)
+
+# Avoid division warnings by setting zero_division=0
+print(classification_report(y_test, y_pred, zero_division=0))
+
+                precision    recall  f1-score   support
+
+          food       0.81      0.92      0.86       209
+     household       1.00      0.82      0.90       187
+    investment       0.96      0.94      0.95       168
+         other       0.85      0.89      0.87       315
+  subscription       0.98      0.92      0.95       182
+transportation       0.98      0.99      0.98       172
+
+      accuracy                           0.91      1233
+     macro avg       0.93      0.91      0.92      1233
+  weighted avg       0.92      0.91      0.91      1233
+
+# Example new notes to classify
+test_notes = [
+    "Bought pizza from Pizza Hut",
+    "Monthly gym subscription payment",
+    "Bus ticket to office",
+    "Paid electricity bill",
+    "Investment in mutual fund"
+]
+
+# Clean the test notes using the same function
+cleaned_test_notes = [clean_text(note) for note in test_notes]
+
+# Vectorize the cleaned test notes
+test_tfidf = vectorizer.transform(cleaned_test_notes)
+
+# Predict categories
+predictions = model.predict(test_tfidf)
+
+# Print results
+for note, category in zip(test_notes, predictions):
+    print(f"Note: '{note}' --> Predicted Category: '{category}'")
+Note: 'Bought pizza from Pizza Hut' --> Predicted Category: 'food'
+Note: 'Monthly gym subscription payment' --> Predicted Category: 'subscription'
+Note: 'Bus ticket to office' --> Predicted Category: 'transportation'
+Note: 'Paid electricity bill' --> Predicted Category: 'household'
+Note: 'Investment in mutual fund' --> Predicted Category: 'investment'
+# Cell 9 - Interactive demo with ipywidgets
+
+from ipywidgets import interact, Dropdown
+
+# Dictionary of demo examples
+demo_examples = {
+    "Food": "Bought pizza from Pizza Hut",
+    "Fitness": "Monthly gym subscription payment",
+    "Transport": "Bus ticket to office",
+    "Bills": "Paid electricity bill",
+    "Investment": "Investment in mutual fund"
+}
+
+def predict_transaction(note="", example=""):
+    # Use user input or selected example
+    input_text = note if note else demo_examples.get(example, "")
+    
+    if not input_text:
+        print(" Please enter text or select an example")
+        return
+    
+    # Clean and predict
+    cleaned = clean_text(input_text)
+    X = vectorizer.transform([cleaned])
+    pred = model.predict(X)[0]
+    proba = model.predict_proba(X).max()
+    
+    print(f"\n Note: '{input_text}'")
+    print(f" Predicted Category: '{pred}' (confidence: {proba:.1%})")
+    print("\nTop 3 Categories:")
+    for i, (cat, score) in enumerate(
+        sorted(zip(model.classes_, model.predict_proba(X)[0]), key=lambda x: -x[1])[:3],
+        1
+    ):
+        print(f"{i}. {cat}: {score:.1%}")
+
+# Interactive widget
+interact(
+    predict_transaction,
+    note="",
+    example=Dropdown(options=[""] + list(demo_examples.keys()), description="Example:")
+)
